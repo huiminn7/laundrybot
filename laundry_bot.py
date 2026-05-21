@@ -157,10 +157,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             # ==================================
             
-        # Change to 45 mins for final presentation!
-        end_time = datetime.now() + timedelta(minutes=1)
+        # ====== THE DOUBLE-ALARM SETUP ======
+        # (Change back to minutes=45 and minutes=5 for the real presentation!)
+        end_time = datetime.now() + timedelta(minutes=3) # Let's test with a 3 min wash
+        early_time = end_time - timedelta(minutes=1)     # Send warning 1 min before it finishes
         
-        # Lock machine
+        # 1. Lock machine
         supabase.table('machines').update({
             'status': 'busy',
             'user_id': user_id,
@@ -169,12 +171,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'updated_at': datetime.now().isoformat()
         }).eq('name', machine).eq('kk_name', kk_name).execute()
         
-        # Add owner reminder
         try:
             washer_number = int(machine.split('_')[1])
         except:
             washer_number = 1
             
+        # 2. Add the EARLY WARNING reminder
+        supabase.table('reminders').insert({
+            'machine_id': washer_number,
+            'user_id': user_id,
+            'username': f"EARLY_{username}", # Notice the EARLY tag!
+            'chat_id': int(user_id),
+            'end_time': early_time.isoformat()
+        }).execute()
+
+        # 3. Add the FINAL UNLOCK reminder
         supabase.table('reminders').insert({
             'machine_id': washer_number,
             'user_id': user_id,
@@ -182,6 +193,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'chat_id': int(user_id),
             'end_time': end_time.isoformat()
         }).execute()
+        # ====================================
         
         alert = f"✅ *{machine.replace('_', ' ')} LOCKED!* Reminders set."
         await show_kk_menu(update, context, kk_name, alert_text=alert)
