@@ -138,7 +138,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, machine, kk_name = data.split(":")
         user = update.effective_user
         user_id = str(user.id)
-        username = user.first_name if user.first_name else user.username
+        # Ensure username is a safe string even if they don't have one set
+        username = user.first_name if user.first_name else (user.username or "Student")
         
         # Verify status directly
         res = supabase.table('machines').select('status').eq('name', machine).eq('kk_name', kk_name).execute()
@@ -147,9 +148,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_kk_menu(update, context, kk_name, alert_text=alert)
             return
             
-        subprocess.run(["python", "update.py", machine, "lock", user_id, username, kk_name])
+        # === NEW: DIRECT DATABASE UPDATE (No more update.py!) ===
+        end_time = datetime.now() + timedelta(minutes=45)
         
-        # FIXED: Embed validation directly inside the frame context instead of sending a new bubble
+        # 1. Update the machine to busy
+        supabase.table('machines').update({
+            'status': 'busy',
+            'user_id': user_id,
+            'username': username,
+            'end_time': end_time.isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }).eq('name', machine).eq('kk_name', kk_name).execute()
+        
+        # 2. Add the reminder for the background loop
+        try:
+            washer_number = int(machine.split('_')[1])
+        except:
+            washer_number = 1
+            
+        supabase.table('reminders').insert({
+            'machine_id': washer_number,
+            'user_id': user_id,
+            'username': username,
+            'chat_id': int(user_id),
+            'end_time': end_time.isoformat()
+        }).execute()
+        # ========================================================
+        
         alert = f"✅ *{machine.replace('_', ' ')} LOCKED!* Reminders set."
         await show_kk_menu(update, context, kk_name, alert_text=alert)
         
@@ -164,9 +189,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         target_machine = res.data[0]['name']
-        subprocess.run(["python", "update.py", target_machine, "free", "", "", kk_name])
         
-        # FIXED: Updates dynamically within the application board template
+        # === NEW: DIRECT DATABASE UNLOCK ===
+        supabase.table('machines').update({
+            'status': 'available',
+            'user_id': '',
+            'username': '',
+            'end_time': None,
+            'updated_at': datetime.now().isoformat()
+        }).eq('name', target_machine).eq('kk_name', kk_name).execute()
+        # ===================================
+        
         alert = f"🔓 *{target_machine.replace('_', ' ')} has been unlocked!*"
         await show_kk_menu(update, context, kk_name, alert_text=alert)
 
