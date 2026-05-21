@@ -21,7 +21,7 @@ username = sys.argv[4] if len(sys.argv) > 4 else ""
 kk_name = sys.argv[5] if len(sys.argv) > 5 else "KK12" # Defaults to KK12 if blank
 
 if action == "lock":
-    end_time = datetime.now() + timedelta(minutes=45)
+    end_time = datetime.now() + timedelta(minutes=1)
     
     # Target specific machine inside the specific KK
     # Create reminder dynamically for any washer number (Washer_1 to Washer_6)

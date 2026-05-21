@@ -44,7 +44,7 @@ else:
                     st.write("🟢 Ready to use")
                     
                     if st.button(f"🔒 Lock Machine", key=f"lock_{name}_{selected_kk}", use_container_width=True):
-                        end_time = datetime.now() + timedelta(minutes=45)
+                        end_time = datetime.now() + timedelta(minutes=1)
                         supabase.table('machines').update({
                             'status': 'busy',
                             'username': 'Web User',
