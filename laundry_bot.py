@@ -154,6 +154,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kk_name = data.split("_")[1]
         await show_kk_menu(update, context, kk_name)
         
+    # === ADDED: Handle the live status checking for a specific KK ===
+    elif data.startswith("status_kk:"):
+        kk_name = data.split(":")[1]
+        
+        # Fetch live data from Supabase filtered by the college
+        response = supabase.table('machines').select('*').eq('kk_name', kk_name).execute()
+        db = {row['name']: row for row in response.data}
+        
+        text = f"🧺 *Live Status for {kk_name}*\n\n"
+        for machine, info in sorted(db.items()):
+            status_icon = "🟢" if info["status"] == "available" else "🔴"
+            text += f"{status_icon} *{machine.replace('_', ' ')}*: {info['status'].title()}\n"
+            if info["status"] == "busy" and info.get("username"):
+                text += f"   👤 Used by: @{info['username']}\n"
+        
+        # Send the status summary as a clear, separate message
+        await query.message.reply_text(text, parse_mode="Markdown")
+        # Keep the interaction menu available so the user doesn't have to re-trigger /start
+        await show_kk_menu(update, context, kk_name)
+        
     elif data.startswith("lock:"):
         _, machine, kk_name = data.split(":")
         user = update.effective_user
@@ -183,7 +203,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subprocess.run(["python", "update.py", target_machine, "free", "", "", kk_name])
         await query.message.reply_text(f"🔓 *{target_machine.replace('_', ' ')} ({kk_name}) has been unlocked!*")
         await show_kk_menu(update, context, kk_name)
-
+        
 # ========== MAIN ==========
 async def main():
     app = Application.builder().token(TOKEN).build()
