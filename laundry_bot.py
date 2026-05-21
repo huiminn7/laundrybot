@@ -1,125 +1,108 @@
-import json
 import asyncio
 import subprocess
-from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from supabase import create_client
 
 # ========== CONFIG ==========
-# Method 1: Try to import from config.py (local)
 try:
-    from config import TOKEN
-    print("✅ Using token from config.py")
+    from config import TOKEN, SUPABASE_URL, SUPABASE_KEY
+    print("✅ Config loaded successfully")
 except ImportError:
-    # Method 2: Use hardcoded token (for testing only)
-    TOKEN = "8878015971:AAFcOM26YNS6k7MJ2G3q0zkRpS-3YHyI2aE"
-    print("⚠️ Using hardcoded token")
+    print("❌ Error: config.py not found. Please create it with TOKEN, SUPABASE_URL, and SUPABASE_KEY")
+    exit(1)
 
-# Supabase config
-try:
-    from supabase_config import SUPABASE_URL, SUPABASE_KEY
-    from supabase import create_client
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Supabase connected")
-except ImportError:
-    print("⚠️ Supabase config not found, using local JSON")
-    supabase = None
+# Initialize Supabase client for reading status
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ========== DATABASE FUNCTIONS ==========
-DB_FILE = "laundry_db.json"
-
-def load_db():
-    try:
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {"Washer_1": {"status": "available"}, "Washer_2": {"status": "available"}}
-
-def save_db(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f)
+# ========== SEND MESSAGE HELPER ==========
+async def send_message(update, context, text):
+    """Helper to send message from either command or callback"""
+    if update.message:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown")
 
 # ========== COMMAND: /start ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Arranging 6 washers into a neat 2-column grid
     keyboard = [
-        [InlineKeyboardButton("📊 View Status", callback_data="status")],
-        [InlineKeyboardButton("🔒 Lock Washer 1", callback_data="lock_1")],
-        [InlineKeyboardButton("🔒 Lock Washer 2", callback_data="lock_2")],
-        [InlineKeyboardButton("🔓 Unlock", callback_data="unlock")],
+        [InlineKeyboardButton("📊 View KK12 Live Status", callback_data="status")],
+        [
+            InlineKeyboardButton("🔒 W1", callback_data="lock_1"), 
+            InlineKeyboardButton("🔒 W2", callback_data="lock_2"),
+            InlineKeyboardButton("🔒 W3", callback_data="lock_3")
+        ],
+        [
+            InlineKeyboardButton("🔒 W4", callback_data="lock_4"), 
+            InlineKeyboardButton("🔒 W5", callback_data="lock_5"),
+            InlineKeyboardButton("🔒 W6", callback_data="lock_6")
+        ],
+        [InlineKeyboardButton("🔓 Unlock My Machine", callback_data="unlock")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "🧺 *Laundry Bot*\n\nUse the buttons below:",
+        "🏢 *KK12 Laundry Tracker*\n\nSelamat Datang! Use the buttons below to check or lock a washing machine:",
         parse_mode="Markdown",
         reply_markup=reply_markup
     )
 
 # ========== COMMAND: /status ==========
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = load_db()
+    # Fetch live data directly from Supabase
+    response = supabase.table('machines').select('*').execute()
+    db = {row['name']: row for row in response.data}
     
-    text = "🧺 *Laundry Status*\n\n"
+    text = "🧺 *Live Laundry Status*\n\n"
     for machine, info in db.items():
         status_icon = "🟢" if info["status"] == "available" else "🔴"
-        text += f"{status_icon} *{machine}*: {info['status']}\n"
+        text += f"{status_icon} *{machine.replace('_', ' ')}*: {info['status'].title()}\n"
+        if info["status"] == "busy" and info.get("username"):
+            text += f"   👤 Used by: @{info['username']}\n"
     
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await send_message(update, context, text)
 
 # ========== LOCK MACHINE ==========
 async def lock_machine(update: Update, context: ContextTypes.DEFAULT_TYPE, machine: str):
     user = update.effective_user
     user_id = str(user.id)
-    username = user.first_name
+    username = user.first_name if user.first_name else user.username
     
-    db = load_db()
+    # Check current status in Supabase before locking
+    response = supabase.table('machines').select('status').eq('name', machine).execute()
     
-    if db[machine]["status"] == "busy":
-        await update.message.reply_text(f"❌ {machine} is already in use!")
+    if response.data and response.data[0]['status'] == 'busy':
+        await send_message(update, context, f"❌ *{machine.replace('_', ' ')}* is already in use!")
         return
     
-    # Lock the machine
-    db[machine]["status"] = "busy"
-    db[machine]["user_id"] = user_id
-    db[machine]["username"] = username
-    save_db(db)
-    
-    # Call update.py
+    # Let update.py handle the Supabase insertion and reminder creation
     subprocess.run(["python", "update.py", machine, "lock", user_id, username])
     
-    await update.message.reply_text(
-        f"✅ *{machine} LOCKED!*\n\n"
+    await send_message(
+        update, context,
+        f"✅ *{machine.replace('_', ' ')} LOCKED!*\n\n"
         f"Your laundry will be done in 45 minutes.\n"
-        f"I'll notify you when it's finished!",
-        parse_mode="Markdown"
+        f"I'll automatically notify you when it's finished!"
     )
 
 # ========== UNLOCK MACHINE ==========
 async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    db = load_db()
     
     # Find which machine this user locked
-    found = None
-    for machine, info in db.items():
-        if info.get("user_id") == user_id and info["status"] == "busy":
-            found = machine
-            break
+    response = supabase.table('machines').select('name').eq('user_id', user_id).eq('status', 'busy').execute()
     
-    if not found:
-        await update.message.reply_text("❌ You don't have any locked machines.")
+    if not response.data:
+        await send_message(update, context, "❌ You don't have any locked machines right now.")
         return
     
-    # Unlock the machine
-    db[found]["status"] = "available"
-    db[found]["user_id"] = ""
-    db[found]["username"] = ""
-    save_db(db)
+    found_machine = response.data[0]['name']
     
-    # Call update.py
-    subprocess.run(["python", "update.py", found, "free", "", ""])
+    # Let update.py handle the database reset
+    subprocess.run(["python", "update.py", found_machine, "free"])
     
-    await update.message.reply_text(f"✅ *{found} UNLOCKED!*", parse_mode="Markdown")
+    await send_message(update, context, f"✅ *{found_machine.replace('_', ' ')} UNLOCKED!* Thank you for clearing the machine.")
 
 # ========== BUTTON HANDLER ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -128,10 +111,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if query.data == "status":
         await status(update, context)
-    elif query.data == "lock_1":
-        await lock_machine(update, context, "Washer_1")
-    elif query.data == "lock_2":
-        await lock_machine(update, context, "Washer_2")
+    elif query.data.startswith("lock_"):
+        # Extracts the number from "lock_1", "lock_2", etc.
+        washer_num = query.data.split("_")[1] 
+        machine_name = f"Washer_{washer_num}"
+        await lock_machine(update, context, machine_name)
     elif query.data == "unlock":
         await unlock(update, context)
 
@@ -139,13 +123,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     app = Application.builder().token(TOKEN).build()
     
-    # Register handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CallbackQueryHandler(button_handler))
     
     print("🤖 Laundry Bot is running...")
-    print("✅ Bot started! Send /start on Telegram")
+    print("✅ Ready! Send /start to the bot on Telegram")
     
     await app.initialize()
     await app.start()

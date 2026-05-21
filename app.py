@@ -23,33 +23,45 @@ def load_machines():
     return {row['name']: row for row in response.data}
 
 # Display machines
+# Display machines in a 3-column grid for better mobile viewing
 machines = load_machines()
 
-cols = st.columns(len(machines))
+# Sort machines so they appear in order (Washer_1, Washer_2, etc.)
+sorted_machines = sorted(machines.items())
 
-for i, (name, data) in enumerate(machines.items()):
-    with cols[i]:
-        if data['status'] == 'available':
-            st.success(f"### {name.replace('_', ' ')}")
-            st.write("🟢 **Status:** Ready to use")
-            st.write("⏱️ **Waiting time:** 0 min")
-        else:
-            st.error(f"### {name.replace('_', ' ')}")
-            st.write("🔴 **Status:** In use")
-            if data['end_time']:
-                end_time = datetime.fromisoformat(data['end_time'].replace('Z', '+00:00'))
-                remaining = int((end_time - datetime.now()).total_seconds() / 60)
-                if remaining > 0:
-                    st.write(f"⏳ **Done in:** {remaining} minutes")
-                    st.write(f"⏰ **Finish at:** {end_time.strftime('%H:%M')}")
-            if data['username']:
-                st.write(f"👤 **User:** @{data['username']}")
+st.write("### 🧺 Washing Machines")
+
+# Create a grid layout (3 columns wide)
+col1, col2, col3 = st.columns(3)
+columns = [col1, col2, col3]
+
+for i, (name, data) in enumerate(sorted_machines):
+    # This math assigns the machine to the correct column (0, 1, or 2)
+    col_index = i % 3 
+    
+    with columns[col_index]:
+        # Using a container makes it look like a nice card
+        with st.container(border=True): 
+            if data['status'] == 'available':
+                st.success(f"**{name.replace('_', ' ')}**")
+                st.write("🟢 Ready to use")
+            else:
+                st.error(f"**{name.replace('_', ' ')}**")
+                st.write("🔴 In use")
+                if data['end_time']:
+                    end_time = datetime.fromisoformat(data['end_time'].replace('Z', '+00:00'))
+                    remaining = int((end_time - datetime.now()).total_seconds() / 60)
+                    if remaining > 0:
+                        st.write(f"⏳ Done in {remaining} mins")
+                if data['username']:
+                    st.caption(f"👤 @{data['username']}")
 
 # Refresh button
-if st.button("🔄 Refresh Now"):
+st.divider()
+if st.button("🔄 Refresh Now", use_container_width=True):
     st.rerun()
 
-# Add JavaScript for auto-refresh
+# Auto-refresh JavaScript
 st.markdown("""
     <script>
         setTimeout(function() {

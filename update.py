@@ -5,9 +5,9 @@ from supabase import create_client
 
 # Import credentials
 try:
-    from supabase_config import SUPABASE_URL, SUPABASE_KEY
+    from config import SUPABASE_URL, SUPABASE_KEY
 except ImportError:
-    print("Error: supabase_config.py not found")
+    print("Error: config.py not found")
     exit(1)
 
 # Initialize Supabase client
