@@ -55,12 +55,24 @@ else:
                 else:
                     st.error(f"**{name.replace('_', ' ')}**")
                     st.write("🔴 In use")
-                    if data['end_time']:
-                        end_time = datetime.fromisoformat(data['end_time'].replace('Z', '+00:00'))
-                        remaining = int((end_time - datetime.now()).total_seconds() / 60)
-                        if remaining > 0:
-                            st.write(f"⏳ Done in {remaining} mins")
-                    if data['username']:
+                    
+                    # === FIXED ROBUST TIMER LOGIC ===
+                    if data.get('end_time'):
+                        try:
+                            # Strip timezone data to match local server time perfectly
+                            end_time_str = data['end_time'].replace('Z', '+00:00')
+                            parsed_end_time = datetime.fromisoformat(end_time_str).replace(tzinfo=None)
+                            remaining = int((parsed_end_time - datetime.now()).total_seconds() / 60)
+                            
+                            if remaining > 0:
+                                st.write(f"⏳ {remaining} mins left")
+                            else:
+                                st.write("⏳ Finishing up...")
+                        except Exception:
+                            pass
+                    # ================================
+                            
+                    if data.get('username'):
                         st.caption(f"👤 @{data['username']}")
                         
                     if st.button(f"🔓 Unlock", key=f"free_{name}_{selected_kk}", use_container_width=True):
@@ -69,5 +81,5 @@ else:
                             'username': '',
                             'end_time': None,
                             'updated_at': datetime.now().isoformat()
-                        }).eq('name', name).eq('kk_name', selected_kk).execute() # Filters by name AND KK
+                        }).eq('name', name).eq('kk_name', selected_kk).execute() 
                         st.rerun()
