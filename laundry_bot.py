@@ -1,5 +1,6 @@
 import asyncio
-import subprocess
+# Removed subprocess entirely
+from datetime import datetime, timedelta # ADDED THIS for the 45 min timer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from supabase import create_client
@@ -106,11 +107,10 @@ async def show_kk_menu(update, context, kk_name, alert_text=None):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # FIXED: We completely removed send_message here. It only edits the window!
     if query:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ========== BUTTON HANDLER (UPDATED FOR DYNAMIC SPLITTING) ==========
+# ========== BUTTON HANDLER (UPDATED FOR DIRECT DB ACCESS) ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -131,14 +131,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif data.startswith("status_kk:"):
         kk_name = data.split(":")[1]
-        # Routes straight back into the main view with a subtle notification header
         await show_kk_menu(update, context, kk_name, alert_text="🔄 Status Board Refreshed!")
         
     elif data.startswith("lock:"):
         _, machine, kk_name = data.split(":")
         user = update.effective_user
         user_id = str(user.id)
-        username = user.first_name if user.first_name else user.username
+        # Ensure username is a safe string
+        username = user.first_name if user.first_name else (user.username or "Student")
         
         # Verify status directly
         res = supabase.table('machines').select('status').eq('name', machine).eq('kk_name', kk_name).execute()
@@ -147,9 +147,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_kk_menu(update, context, kk_name, alert_text=alert)
             return
             
-        subprocess.run(["python", "update.py", machine, "lock", user_id, username, kk_name])
+        # === NEW: DIRECT DATABASE UPDATE (No more update.py!) ===
+        end_time = datetime.now() + timedelta(minutes=45)
         
-        # FIXED: Embed validation directly inside the frame context instead of sending a new bubble
+        # 1. Update the machine to busy
+        supabase.table('machines').update({
+            'status': 'busy',
+            'user_id': user_id,
+            'username': username,
+            'end_time': end_time.isoformat(),
+            'updated_at': datetime.now().isoformat()
+        }).eq('name', machine).eq('kk_name', kk_name).execute()
+        
+        # 2. Add the reminder for the background loop
+        try:
+            washer_number = int(machine.split('_')[1])
+        except:
+            washer_number = 1
+            
+        supabase.table('reminders').insert({
+            'machine_id': washer_number,
+            'user_id': user_id,
+            'username': username,
+            'chat_id': int(user_id),
+            'end_time': end_time.isoformat()
+        }).execute()
+        # ========================================================
+        
         alert = f"✅ *{machine.replace('_', ' ')} LOCKED!* Reminders set."
         await show_kk_menu(update, context, kk_name, alert_text=alert)
         
@@ -164,9 +188,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         target_machine = res.data[0]['name']
-        subprocess.run(["python", "update.py", target_machine, "free", "", "", kk_name])
         
-        # FIXED: Updates dynamically within the application board template
+        # === NEW: DIRECT DATABASE UNLOCK ===
+        supabase.table('machines').update({
+            'status': 'available',
+            'user_id': '',
+            'username': '',
+            'end_time': None,
+            'updated_at': datetime.now().isoformat()
+        }).eq('name', target_machine).eq('kk_name', kk_name).execute()
+        # ===================================
+        
         alert = f"🔓 *{target_machine.replace('_', ' ')} has been unlocked!*"
         await show_kk_menu(update, context, kk_name, alert_text=alert)
 
@@ -190,7 +222,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
 # import asyncio
 # import subprocess
 # from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -205,12 +236,12 @@ if __name__ == "__main__":
 #     print("❌ Error: config.py not found. Please create it with TOKEN, SUPABASE_URL, and SUPABASE_KEY")
 #     exit(1)
 
-# # Initialize Supabase client for reading status
+# # Initialize Supabase client
 # supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # # ========== SEND MESSAGE HELPER ==========
 # async def send_message(update, context, text):
-#     """Helper to send message from either command or callback"""
+#     """Helper used ONLY for the standalone /status command"""
 #     if update.message:
 #         await update.message.reply_text(text, parse_mode="Markdown")
 #     elif update.callback_query:
@@ -218,7 +249,6 @@ if __name__ == "__main__":
 
 # # ========== COMMAND: /start ==========
 # async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     # First Step: User selects their specific college
 #     keyboard = [
 #         [InlineKeyboardButton("🏢 KK12 (12th College)", callback_data="select_KK12")],
 #         [InlineKeyboardButton("🏢 KK10 (10th College)", callback_data="select_KK10")],
@@ -234,7 +264,6 @@ if __name__ == "__main__":
 
 # # ========== COMMAND: /status ==========
 # async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     # Fetch live data directly from Supabase
 #     response = supabase.table('machines').select('*').execute()
 #     db = {row['name']: row for row in response.data}
     
@@ -247,85 +276,63 @@ if __name__ == "__main__":
     
 #     await send_message(update, context, text)
 
-# # ========== LOCK MACHINE ==========
-# async def lock_machine(update: Update, context: ContextTypes.DEFAULT_TYPE, machine: str):
-#     user = update.effective_user
-#     user_id = str(user.id)
-#     username = user.first_name if user.first_name else user.username
-    
-#     # Check current status in Supabase before locking
-#     response = supabase.table('machines').select('status').eq('name', machine).execute()
-    
-#     if response.data and response.data[0]['status'] == 'busy':
-#         await send_message(update, context, f"❌ *{machine.replace('_', ' ')}* is already in use!")
-#         return
-    
-#     # Let update.py handle the Supabase insertion and reminder creation
-#     subprocess.run(["python", "update.py", machine, "lock", user_id, username])
-    
-#     await send_message(
-#         update, context,
-#         f"✅ *{machine.replace('_', ' ')} LOCKED!*\n\n"
-#         f"Your laundry will be done in 45 minutes.\n"
-#         f"I'll automatically notify you when it's finished!"
-#     )
-
-# # ========== UNLOCK MACHINE ==========
-# async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     user_id = str(update.effective_user.id)
-    
-#     # Find which machine this user locked
-#     response = supabase.table('machines').select('name').eq('user_id', user_id).eq('status', 'busy').execute()
-    
-#     if not response.data:
-#         await send_message(update, context, "❌ You don't have any locked machines right now.")
-#         return
-    
-#     found_machine = response.data[0]['name']
-    
-#     # Let update.py handle the database reset
-#     subprocess.run(["python", "update.py", found_machine, "free"])
-    
-#     await send_message(update, context, f"✅ *{found_machine.replace('_', ' ')} UNLOCKED!* Thank you for clearing the machine.")
-
 # # ========== SHOW LAUNDRY OPTIONS FOR SELECTED KK ==========
-# async def show_kk_menu(update, context, kk_name):
+# async def show_kk_menu(update, context, kk_name, alert_text=None):
+#     query = update.callback_query
+    
 #     # Fetch live data specifically for this KK
 #     response = supabase.table('machines').select('*').eq('kk_name', kk_name).execute()
 #     machines = response.data
     
+#     # Start building a single, cohesive message string
+#     text = f"🏢 *{kk_name} Laundry Management*\n"
+#     text += "--------------------------------------\n"
+    
+#     # If there is a warning or success notification, insert it right into the block
+#     if alert_text:
+#         text += f"{alert_text}\n"
+#         text += "--------------------------------------\n"
+        
+#     text += "📋 *Current Machine Availability:*\n"
 #     if not machines:
-#         await send_message(update, context, f"❌ No machines registered for {kk_name} yet.")
-#         return
+#         text += "❌ No machines registered for this college yet.\n"
+#     else:
+#         sorted_machines = sorted(machines, key=lambda x: x['name'])
+#         for info in sorted_machines:
+#             status_icon = "🟢" if info["status"] == "available" else "🔴"
+#             machine_title = info["name"].replace('_', ' ')
+#             text += f"{status_icon} *{machine_title}*: {info['status'].title()}\n"
+#             if info["status"] == "busy" and info.get("username"):
+#                 text += f"      👤 @{info['username']}\n"
+                
+#     text += "--------------------------------------\n"
+#     text += "Click a machine below to lock it for a 45-minute cycle:"
 
-#     # 1. Put the Status Button right at the top of the KK menu!
+#     # Build the buttons
 #     keyboard = [
-#         [InlineKeyboardButton(f"📊 View {kk_name} Live Status", callback_data=f"status_kk:{kk_name}")]
+#         [InlineKeyboardButton(f"🔄 Refresh Live Status", callback_data=f"status_kk:{kk_name}")]
 #     ]
     
-#     # 2. Build the dynamic washer buttons (2 items per row)
-#     row = []
-#     for m in sorted(machines, key=lambda x: x['name']):
-#         status_label = "🔴" if m['status'] == 'busy' else "🔒"
-#         button = InlineKeyboardButton(f"{status_label} {m['name'].replace('_', ' ')}", callback_data=f"lock:{m['name']}:{kk_name}")
-#         row.append(button)
-#         if len(row) == 2:
+#     if machines:
+#         row = []
+#         for m in sorted(machines, key=lambda x: x['name']):
+#             status_label = "🔴" if m['status'] == 'busy' else "🔒"
+#             button = InlineKeyboardButton(f"{status_label} {m['name'].replace('_', ' ')}", callback_data=f"lock:{m['name']}:{kk_name}")
+#             row.append(button)
+#             if len(row) == 2:
+#                 keyboard.append(row)
+#                 row = []
+#         if row:
 #             keyboard.append(row)
-#             row = []
-#     if row:
-#         keyboard.append(row)
         
-#     # 3. Append navigation buttons at the bottom
 #     keyboard.append([InlineKeyboardButton("🔓 Unlock My Machine", callback_data=f"unlock_prompt:{kk_name}")])
 #     keyboard.append([InlineKeyboardButton("⬅️ Back to College List", callback_data="back_to_main")])
     
 #     reply_markup = InlineKeyboardMarkup(keyboard)
     
-#     text = f"🏢 *{kk_name} Laundry Management*\n\nChoose an option below:"
-#     await send_message(update, context, text)
-    
-#     if update.callback_query:
-#         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+#     # FIXED: We completely removed send_message here. It only edits the window!
+#     if query:
+#         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 # # ========== BUTTON HANDLER (UPDATED FOR DYNAMIC SPLITTING) ==========
 # async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,7 +342,6 @@ if __name__ == "__main__":
 #     data = query.data
     
 #     if data == "back_to_main":
-#         # Returns user to selection layout
 #         keyboard = [
 #             [InlineKeyboardButton("🏢 KK12", callback_data="select_KK12")],
 #             [InlineKeyboardButton("🏢 KK10", callback_data="select_KK10")],
@@ -347,53 +353,10 @@ if __name__ == "__main__":
 #         kk_name = data.split("_")[1]
 #         await show_kk_menu(update, context, kk_name)
         
-#     # === FIXED: Handle the live status checking for a specific KK ===
-#     # === FIXED STATUS: Updates the menu text directly! ===
 #     elif data.startswith("status_kk:"):
 #         kk_name = data.split(":")[1]
-        
-#         # Fetch live data from Supabase rows directly
-#         response = supabase.table('machines').select('*').eq('kk_name', kk_name).execute()
-#         machines_list = response.data
-        
-#         # Start building the updated menu text block
-#         text = f"🏢 *{kk_name} Laundry Management*\n"
-#         text += "--------------------------------------\n"
-        
-#         if not machines_list:
-#             text += "❌ No machines found registered for this college room.\n"
-#         else:
-#             sorted_machines = sorted(machines_list, key=lambda x: x['name'])
-#             for info in sorted_machines:
-#                 status_icon = "🟢" if info["status"] == "available" else "🔴"
-#                 machine_title = info["name"].replace('_', ' ')
-#                 text += f"{status_icon} *{machine_title}*: {info['status'].title()}\n"
-#                 if info["status"] == "busy" and info.get("username"):
-#                     text += f"      👤 @{info['username']}\n"
-        
-#         text += "--------------------------------------\n"
-#         text += "Click a machine below to lock it for a 45-minute cycle:"
-
-#         # Rebuild the keyboard menu exact same way so it doesn't vanish
-#         keyboard = [
-#             [InlineKeyboardButton(f"🔄 Refresh Live Status", callback_data=f"status_kk:{kk_name}")]
-#         ]
-#         row = []
-#         for m in sorted(machines_list, key=lambda x: x['name']):
-#             status_label = "🔴" if m['status'] == 'busy' else "🔒"
-#             button = InlineKeyboardButton(f"{status_label} {m['name'].replace('_', ' ')}", callback_data=f"lock:{m['name']}:{kk_name}")
-#             row.append(button)
-#             if len(row) == 2:
-#                 keyboard.append(row)
-#                 row = []
-#         if row:
-#             keyboard.append(row)
-            
-#         keyboard.append([InlineKeyboardButton("🔓 Unlock My Machine", callback_data=f"unlock_prompt:{kk_name}")])
-#         keyboard.append([InlineKeyboardButton("⬅️ Back to College List", callback_data="back_to_main")])
-        
-#         # EDIT the current message instead of sending a new one!
-#         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+#         # Routes straight back into the main view with a subtle notification header
+#         await show_kk_menu(update, context, kk_name, alert_text="🔄 Status Board Refreshed!")
         
 #     elif data.startswith("lock:"):
 #         _, machine, kk_name = data.split(":")
@@ -404,12 +367,15 @@ if __name__ == "__main__":
 #         # Verify status directly
 #         res = supabase.table('machines').select('status').eq('name', machine).eq('kk_name', kk_name).execute()
 #         if res.data and res.data[0]['status'] == 'busy':
-#             await query.message.reply_text(f"❌ *{machine.replace('_', ' ')}* inside {kk_name} is already being used!")
+#             alert = f"❌ *{machine.replace('_', ' ')}* is already being used!"
+#             await show_kk_menu(update, context, kk_name, alert_text=alert)
 #             return
             
 #         subprocess.run(["python", "update.py", machine, "lock", user_id, username, kk_name])
-#         await query.message.reply_text(f"✅ *{machine.replace('_', ' ')} ({kk_name}) LOCKED!* Check your live dashboard updates.")
-#         await show_kk_menu(update, context, kk_name) # Refresh layout states
+        
+#         # FIXED: Embed validation directly inside the frame context instead of sending a new bubble
+#         alert = f"✅ *{machine.replace('_', ' ')} LOCKED!* Reminders set."
+#         await show_kk_menu(update, context, kk_name, alert_text=alert)
         
 #     elif data.startswith("unlock_prompt:"):
 #         kk_name = data.split(":")[1]
@@ -417,13 +383,16 @@ if __name__ == "__main__":
         
 #         res = supabase.table('machines').select('name').eq('user_id', user_id).eq('status', 'busy').eq('kk_name', kk_name).execute()
 #         if not res.data:
-#             await query.message.reply_text(f"❌ You don't have any active locked machines inside {kk_name}.")
+#             alert = f"❌ You don't have any active locked machines inside {kk_name}."
+#             await show_kk_menu(update, context, kk_name, alert_text=alert)
 #             return
             
 #         target_machine = res.data[0]['name']
 #         subprocess.run(["python", "update.py", target_machine, "free", "", "", kk_name])
-#         await query.message.reply_text(f"🔓 *{target_machine.replace('_', ' ')} ({kk_name}) has been unlocked!*")
-#         await show_kk_menu(update, context, kk_name)
+        
+#         # FIXED: Updates dynamically within the application board template
+#         alert = f"🔓 *{target_machine.replace('_', ' ')} has been unlocked!*"
+#         await show_kk_menu(update, context, kk_name, alert_text=alert)
 
 # # ========== MAIN ==========
 # async def main():
@@ -444,3 +413,4 @@ if __name__ == "__main__":
 
 # if __name__ == "__main__":
 #     asyncio.run(main())
+
