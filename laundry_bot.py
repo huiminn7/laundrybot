@@ -21,6 +21,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏢 KK12 (12th College)", callback_data="select_KK12")],
         [InlineKeyboardButton("🏢 KK10 (10th College)", callback_data="select_KK10")],
         [InlineKeyboardButton("🏢 KK1 (1st College)", callback_data="select_KK1")],
+        [InlineKeyboardButton("🌐 View Live Web Dashboard", url="https://laundrytracker.streamlit.app/")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
