@@ -148,7 +148,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         # === NEW: DIRECT DATABASE UPDATE (No more update.py!) ===
-        end_time = datetime.now() + timedelta(minutes=45)
+        end_time = datetime.now() + timedelta(minutes=1)
         
         # 1. Update the machine to busy
         supabase.table('machines').update({
